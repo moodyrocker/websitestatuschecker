@@ -3,22 +3,20 @@ import Header from "./Header";
 import URLInputForm from "./URLInputForm";
 import StatusDashboard from "./StatusDashboard";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "./ui/tabs";
-import { Clock, BarChart2, RefreshCw } from "lucide-react";
+import { Clock, BarChart2, RefreshCw, Download } from "lucide-react";
 import { Button } from "./ui/button";
+import {
+  getCheckHistory,
+  exportCheckHistory,
+  CheckHistoryItem,
+} from "../utils/networkUtils";
 
 const Home = () => {
   const [isDarkMode, setIsDarkMode] = useState(false);
   const [url, setUrl] = useState("");
   const [isChecking, setIsChecking] = useState(false);
   const [activeTab, setActiveTab] = useState("current");
-  const [checkHistory, setCheckHistory] = useState<
-    Array<{
-      url: string;
-      timestamp: string;
-      success: boolean;
-      responseTime: number;
-    }>
-  >([]);
+  const [checkHistory, setCheckHistory] = useState<CheckHistoryItem[]>([]);
 
   // Apply dark mode class to document
   useEffect(() => {
@@ -28,6 +26,18 @@ const Home = () => {
       document.documentElement.classList.remove("dark");
     }
   }, [isDarkMode]);
+
+  // Load check history from localStorage on component mount
+  useEffect(() => {
+    setCheckHistory(getCheckHistory());
+  }, []);
+
+  // Refresh history when a check completes
+  useEffect(() => {
+    if (!isChecking) {
+      setCheckHistory(getCheckHistory());
+    }
+  }, [isChecking]);
 
   // Auto-switch to current tab when checking starts
   useEffect(() => {
@@ -47,24 +57,17 @@ const Home = () => {
 
   const handleCheckComplete = (success: boolean, totalTime: number) => {
     setIsChecking(false);
-
-    // Add to check history
-    const now = new Date();
-    setCheckHistory((prev) => [
-      {
-        url,
-        timestamp: now.toLocaleString(),
-        success,
-        responseTime: totalTime,
-      },
-      ...prev.slice(0, 9), // Keep only the 10 most recent checks
-    ]);
+    // History is now updated in StatusDashboard component
   };
 
   const handleRecheck = () => {
     if (url) {
       setIsChecking(true);
     }
+  };
+
+  const handleExportHistory = () => {
+    exportCheckHistory();
   };
 
   // Get recent URLs for suggestions
@@ -137,7 +140,21 @@ const Home = () => {
 
               <TabsContent value="history" className="mt-0">
                 <div className="bg-card rounded-lg shadow-md border p-6">
-                  <h2 className="text-xl font-semibold mb-4">Check History</h2>
+                  <div className="flex justify-between items-center mb-4">
+                    <h2 className="text-xl font-semibold">Check History</h2>
+                    {checkHistory.length > 0 && (
+                      <Button
+                        variant="outline"
+                        size="sm"
+                        onClick={handleExportHistory}
+                        className="flex items-center"
+                      >
+                        <Download className="mr-2 h-4 w-4" />
+                        Export Log
+                      </Button>
+                    )}
+                  </div>
+
                   {checkHistory.length > 0 ? (
                     <div className="overflow-x-auto">
                       <table className="w-full border-collapse">
@@ -208,6 +225,9 @@ const Home = () => {
       <footer className="py-6 border-t bg-background">
         <div className="container mx-auto px-4 text-center text-muted-foreground">
           <p>Website Status Checker &copy; {new Date().getFullYear()}</p>
+          <p className="text-xs mt-1">
+            Storing up to 50 recent checks in browser storage
+          </p>
         </div>
       </footer>
     </div>
