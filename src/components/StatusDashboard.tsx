@@ -279,7 +279,7 @@ const StatusDashboard = ({
             </div>
             {checkLocation && (
               <div className="mt-2 text-sm text-muted-foreground flex items-center">
-                <span className="font-medium mr-1">Check location:</span>{" "}
+                <span className="font-medium mr-1">Check location:</span>
                 {checkLocation}
               </div>
             )}

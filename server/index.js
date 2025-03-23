@@ -153,7 +153,7 @@ app.post("/api/check-website", async (req, res) => {
       return;
     }
 
-    // Send update to client
+    // Send update to client after DNS check
     res.write(JSON.stringify({ type: "update", data: results }) + "\n");
 
     // Connection Establishment Check
