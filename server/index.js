@@ -65,8 +65,8 @@ app.post("/api/check-website", async (req, res) => {
     const dnsStartTime = Date.now();
     try {
       await new Promise((resolve, reject) => {
-        dns.lookup(domain, (err) => {
-          if (err) {
+        dns.lookup(domain, { all: true }, (err, addresses) => {
+          if (err || !addresses || addresses.length === 0) {
             reject(new Error("Domain not resolvable"));
           } else {
             resolve();
