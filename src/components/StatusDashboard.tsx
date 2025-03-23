@@ -42,6 +42,8 @@ const StatusDashboard = ({
   const [totalResponseTime, setTotalResponseTime] = useState(0);
   const [errorMessage, setErrorMessage] = useState("");
   const [progress, setProgress] = useState(0);
+  const [checkLocation, setCheckLocation] = useState("");
+  const [checkIP, setCheckIP] = useState("");
 
   // Reset the dashboard when a new check starts
   useEffect(() => {
@@ -135,6 +137,10 @@ const StatusDashboard = ({
               setIsSuccess(data.isSuccess);
               setTotalResponseTime(data.totalResponseTime);
               setErrorMessage(data.errorMessage);
+
+              // Set location information if available
+              if (data.checkLocation) setCheckLocation(data.checkLocation);
+              if (data.checkIP) setCheckIP(data.checkIP);
 
               // Update progress based on stages
               updateProgressFromStages(data.stages);
@@ -271,6 +277,12 @@ const StatusDashboard = ({
                 <ExternalLink className="h-4 w-4" />
               </a>
             </div>
+            {checkLocation && (
+              <div className="mt-2 text-sm text-muted-foreground flex items-center">
+                <span className="font-medium mr-1">Check location:</span>{" "}
+                {checkLocation}
+              </div>
+            )}
           </div>
         )}
 

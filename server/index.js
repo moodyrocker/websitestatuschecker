@@ -4,6 +4,7 @@ import dns from "dns";
 import https from "https";
 import http from "http";
 import { URL } from "url";
+import axios from "axios";
 
 const app = express();
 const PORT = process.env.PORT || 3001;
@@ -30,11 +31,44 @@ const extractDomain = (url) => {
   }
 };
 
+// Function to get location from IP
+async function getLocationFromIP() {
+  try {
+    // Using ipinfo.io service to get location data
+    const response = await axios.get("https://ipinfo.io/json");
+    return {
+      ip: response.data.ip,
+      city: response.data.city,
+      region: response.data.region,
+      country: response.data.country,
+      location: `${response.data.city}, ${response.data.region}, ${response.data.country}`,
+    };
+  } catch (error) {
+    console.error("Error getting location:", error);
+    return {
+      ip: "Unknown",
+      city: "Unknown",
+      region: "Unknown",
+      country: "Unknown",
+      location: "Unknown location",
+    };
+  }
+}
+
 // Endpoint to check website status
 app.post("/api/check-website", async (req, res) => {
   const { url } = req.body;
   if (!url) {
     return res.status(400).json({ error: "URL is required" });
+  }
+
+  // Get location information
+  let locationInfo;
+  try {
+    locationInfo = await getLocationFromIP();
+  } catch (error) {
+    console.error("Failed to get location info:", error);
+    locationInfo = { location: "Unknown location", ip: "Unknown" };
   }
 
   const processedUrl = ensureProtocol(url);
@@ -51,6 +85,8 @@ app.post("/api/check-website", async (req, res) => {
     isSuccess: false,
     totalResponseTime: 0,
     errorMessage: "",
+    checkLocation: locationInfo.location,
+    checkIP: locationInfo.ip,
   };
 
   const startTime = Date.now();
