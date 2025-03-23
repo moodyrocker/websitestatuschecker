@@ -64,6 +64,39 @@ const StatusDashboard = ({
     }
   }, [isChecking, url]);
 
+<<<<<<< HEAD
+=======
+  // Handle stopping the checks
+  const handleStopChecks = () => {
+    // Cancel the reader if it exists
+    if (readerRef.current) {
+      readerRef.current.cancel("Check stopped by user").catch(console.error);
+      readerRef.current = null;
+    }
+
+    // Abort the fetch request if it's still in progress
+    if (abortControllerRef.current) {
+      abortControllerRef.current.abort();
+      abortControllerRef.current = null;
+    }
+
+    setIsStopped(true);
+    setIsComplete(true);
+    setErrorMessage("Check stopped by user");
+    setProgress(100);
+    onStopCheck();
+
+    // Save stopped check to history
+    saveCheckToHistory({
+      url: url,
+      timestamp: new Date().toLocaleString(),
+      success: false,
+      responseTime: totalResponseTime,
+      errorMessage: "Check stopped by user",
+    });
+  };
+
+>>>>>>> parent of 5ca6bf6 (made changes)
   // This function performs server-side website status checks
   const performServerChecks = async (targetUrl: string) => {
     // Let the server handle URL processing

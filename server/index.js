@@ -95,11 +95,25 @@ app.post("/api/check-website", async (req, res) => {
     const dnsStartTime = Date.now();
     try {
       await new Promise((resolve, reject) => {
+<<<<<<< HEAD
         dns.lookup(domain, (err) => {
           if (err) {
             reject(new Error("Domain not resolvable"));
           } else {
             resolve();
+=======
+        // Set a timeout for DNS resolution to prevent hanging
+        const dnsTimeout = setTimeout(() => {
+          reject(new Error("DNS resolution timed out after 5 seconds"));
+        }, 5000);
+
+        dns.lookup(domain, { all: true }, (err, addresses) => {
+          clearTimeout(dnsTimeout);
+          if (err || !addresses || addresses.length === 0) {
+            reject(new Error(err ? err.message : "Domain not resolvable"));
+          } else {
+            resolve(addresses);
+>>>>>>> parent of 5ca6bf6 (made changes)
           }
         });
       });
@@ -451,6 +465,30 @@ app.get("/api/health", (req, res) => {
   res.json({ status: "ok" });
 });
 
+<<<<<<< HEAD
+=======
+// Serve static files if in production
+if (process.env.NODE_ENV === "production") {
+  import("path").then((path) => {
+    const __dirname = path.dirname(new URL(import.meta.url).pathname);
+    app.use(express.static(path.join(__dirname, "../dist")));
+
+    // Handle all other routes by serving the index.html
+    app.get("*", (req, res) => {
+      res.sendFile(path.join(__dirname, "../dist/index.html"));
+    });
+  });
+} else {
+  // In development, just respond with a simple message for the root route
+  app.get("/", (req, res) => {
+    res.json({
+      message:
+        "Server is running. Use the client application to interact with the API.",
+    });
+  });
+}
+
+>>>>>>> parent of 5ca6bf6 (made changes)
 app.listen(PORT, () => {
   console.log(`Server running on port ${PORT}`);
 });
