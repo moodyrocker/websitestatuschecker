@@ -32,6 +32,9 @@ const extractDomain = (url) => {
 
 // Endpoint to check website status
 app.post("/api/check-website", async (req, res) => {
+  // Set appropriate headers for Vercel environment
+  res.setHeader("Cache-Control", "no-cache, no-transform");
+  res.setHeader("X-Accel-Buffering", "no");
   const { url } = req.body;
   if (!url) {
     return res.status(400).json({ error: "URL is required" });
@@ -71,19 +74,39 @@ app.post("/api/check-website", async (req, res) => {
     const dnsStartTime = Date.now();
     try {
       await new Promise((resolve, reject) => {
-        // Set a timeout for DNS resolution to prevent hanging
+        // Set a shorter timeout for DNS resolution to prevent hanging on Vercel
         const dnsTimeout = setTimeout(() => {
-          reject(new Error("DNS resolution timed out after 5 seconds"));
-        }, 5000);
+          reject(new Error("DNS resolution timed out after 3 seconds"));
+        }, 3000);
 
-        dns.lookup(domain, { all: true }, (err, addresses) => {
+        // Try both dns.lookup and dns.promises.resolve4 for better compatibility
+        try {
+          // First attempt with dns.lookup
+          dns.lookup(domain, { all: true }, (err, addresses) => {
+            if (!err && addresses && addresses.length > 0) {
+              clearTimeout(dnsTimeout);
+              resolve(addresses);
+            } else {
+              // If dns.lookup fails, we'll try dns.resolve4 in the catch block
+              // Don't reject here to allow the second method to try
+              if (err)
+                console.log("DNS lookup failed, trying resolve4:", err.message);
+            }
+          });
+
+          // Second attempt with dns.resolve (works better in some environments)
+          dns.resolve(domain, (err, addresses) => {
+            clearTimeout(dnsTimeout);
+            if (err || !addresses || addresses.length === 0) {
+              reject(new Error(err ? err.message : "Domain not resolvable"));
+            } else {
+              resolve(addresses);
+            }
+          });
+        } catch (error) {
           clearTimeout(dnsTimeout);
-          if (err || !addresses || addresses.length === 0) {
-            reject(new Error(err ? err.message : "Domain not resolvable"));
-          } else {
-            resolve(addresses);
-          }
-        });
+          reject(new Error(`DNS resolution failed: ${error.message}`));
+        }
       });
 
       const dnsTime = Date.now() - dnsStartTime;
@@ -432,6 +455,9 @@ app.post("/api/check-website", async (req, res) => {
 app.get("/api/health", (req, res) => {
   res.json({ status: "ok" });
 });
+
+// Handle CORS for Vercel deployment
+app.options("*", cors());
 
 // Serve static files if in production
 if (process.env.NODE_ENV === "production") {

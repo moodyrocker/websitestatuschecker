@@ -89,18 +89,25 @@ const StatusDashboard = ({
 
   // Handle stopping the checks
   const handleStopChecks = () => {
+    console.log("Stopping checks...");
+
     // Cancel the reader if it exists
     if (readerRef.current) {
-      readerRef.current.cancel("Check stopped by user").catch(console.error);
+      console.log("Cancelling reader...");
+      readerRef.current.cancel("Check stopped by user").catch((err) => {
+        console.error("Error cancelling reader:", err);
+      });
       readerRef.current = null;
     }
 
     // Abort the fetch request if it's still in progress
     if (abortControllerRef.current) {
+      console.log("Aborting fetch request...");
       abortControllerRef.current.abort();
       abortControllerRef.current = null;
     }
 
+    // Update UI immediately
     setIsStopped(true);
     setIsComplete(true);
     setErrorMessage("Check stopped by user");
