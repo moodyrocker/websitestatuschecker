@@ -97,24 +97,61 @@ app.post("/api/check-website", async (req, res) => {
   res.setHeader("Connection", "keep-alive");
 
   try {
-    // DNS Resolution Check - Skip actual DNS resolution and simulate success
+    // DNS Resolution Check - Perform actual DNS resolution
     results.stages[0].status = "loading";
     // Send initial update to client
     res.write(JSON.stringify({ type: "update", data: results }) + "\n");
 
     const dnsStartTime = Date.now();
-    // Simulate successful DNS resolution
-    await new Promise((resolve) => setTimeout(resolve, 300));
+    try {
+      // Use dns.promises for actual DNS resolution with a timeout
+      await new Promise((resolve, reject) => {
+        const dnsTimeout = setTimeout(() => {
+          reject(new Error("DNS resolution timed out after 5 seconds"));
+        }, 5000);
 
-    const dnsTime = Date.now() - dnsStartTime;
-    cumulativeTime += dnsTime;
-    results.stages[0].status = "success";
-    results.stages[0].timestamp = new Date().toLocaleTimeString([], {
-      hour: "2-digit",
-      minute: "2-digit",
-      second: "2-digit",
-    });
-    results.stages[0].durationMs = dnsTime;
+        dns.lookup(domain, (err, address) => {
+          clearTimeout(dnsTimeout);
+          if (err) {
+            reject(err);
+          } else {
+            resolve(address);
+          }
+        });
+      });
+
+      const dnsTime = Date.now() - dnsStartTime;
+      cumulativeTime += dnsTime;
+      results.stages[0].status = "success";
+      results.stages[0].timestamp = new Date().toLocaleTimeString([], {
+        hour: "2-digit",
+        minute: "2-digit",
+        second: "2-digit",
+      });
+      results.stages[0].durationMs = dnsTime;
+    } catch (error) {
+      const dnsTime = Date.now() - dnsStartTime;
+      cumulativeTime += dnsTime;
+      results.stages[0].status = "error";
+      results.stages[0].timestamp = new Date().toLocaleTimeString([], {
+        hour: "2-digit",
+        minute: "2-digit",
+        second: "2-digit",
+      });
+      results.stages[0].durationMs = dnsTime;
+      results.stages[0].errorDetails = error.message || "Failed to resolve DNS";
+
+      results.isComplete = true;
+      results.isSuccess = false;
+      results.totalResponseTime = cumulativeTime;
+      results.errorMessage =
+        "DNS resolution failed: " + (error.message || "Failed to resolve DNS");
+
+      // Send final update to client
+      res.write(JSON.stringify({ type: "final", data: results }) + "\n");
+      res.end();
+      return;
+    }
 
     // Send update to client
     res.write(JSON.stringify({ type: "update", data: results }) + "\n");
