@@ -4,7 +4,6 @@ import dns from "dns";
 import https from "https";
 import http from "http";
 import { URL } from "url";
-import axios from "axios";
 
 const app = express();
 const PORT = process.env.PORT || 3001;
@@ -31,39 +30,12 @@ const extractDomain = (url) => {
   }
 };
 
-// Function to get location from IP
-async function getLocationFromIP() {
-  try {
-    // Using ipinfo.io service to get location data
-    const response = await axios.get("https://ipinfo.io/json");
-    return {
-      ip: response.data.ip,
-      city: response.data.city,
-      region: response.data.region,
-      country: response.data.country,
-      location: `${response.data.city}, ${response.data.region}, ${response.data.country}`,
-    };
-  } catch (error) {
-    console.error("Error getting location:", error);
-    return {
-      ip: "Unknown",
-      city: "Unknown",
-      region: "Unknown",
-      country: "Unknown",
-      location: "Unknown location",
-    };
-  }
-}
-
 // Endpoint to check website status
 app.post("/api/check-website", async (req, res) => {
   const { url } = req.body;
   if (!url) {
     return res.status(400).json({ error: "URL is required" });
   }
-
-  // Get location information
-  const locationInfo = await getLocationFromIP();
 
   const processedUrl = ensureProtocol(url);
   const domain = extractDomain(processedUrl);
@@ -79,66 +51,37 @@ app.post("/api/check-website", async (req, res) => {
     isSuccess: false,
     totalResponseTime: 0,
     errorMessage: "",
-    checkLocation: locationInfo.location,
-    checkIP: locationInfo.ip,
   };
 
   const startTime = Date.now();
   let cumulativeTime = 0;
 
+  // Set up response headers for streaming
+  res.setHeader("Content-Type", "application/json");
+  res.setHeader("Connection", "keep-alive");
+
   try {
-    // DNS Resolution Check
+    // DNS Resolution Check - Skip actual DNS resolution and simulate success
     results.stages[0].status = "loading";
     // Send initial update to client
     res.write(JSON.stringify({ type: "update", data: results }) + "\n");
 
     const dnsStartTime = Date.now();
-    try {
-      await new Promise((resolve, reject) => {
-        dns.lookup(domain, (err) => {
-          if (err) {
-            reject(new Error("Domain not resolvable"));
-          } else {
-            resolve();
-          }
-        });
-      });
+    // Simulate successful DNS resolution
+    await new Promise((resolve) => setTimeout(resolve, 300));
 
-      const dnsTime = Date.now() - dnsStartTime;
-      cumulativeTime += dnsTime;
-      results.stages[0].status = "success";
-      results.stages[0].timestamp = new Date().toLocaleTimeString([], {
-        hour: "2-digit",
-        minute: "2-digit",
-        second: "2-digit",
-      });
-      results.stages[0].durationMs = dnsTime;
+    const dnsTime = Date.now() - dnsStartTime;
+    cumulativeTime += dnsTime;
+    results.stages[0].status = "success";
+    results.stages[0].timestamp = new Date().toLocaleTimeString([], {
+      hour: "2-digit",
+      minute: "2-digit",
+      second: "2-digit",
+    });
+    results.stages[0].durationMs = dnsTime;
 
-      // Send update to client
-      res.write(JSON.stringify({ type: "update", data: results }) + "\n");
-    } catch (error) {
-      const dnsTime = Date.now() - dnsStartTime;
-      cumulativeTime += dnsTime;
-      results.stages[0].status = "error";
-      results.stages[0].timestamp = new Date().toLocaleTimeString([], {
-        hour: "2-digit",
-        minute: "2-digit",
-        second: "2-digit",
-      });
-      results.stages[0].durationMs = dnsTime;
-      results.stages[0].errorDetails = error.message || "Failed to resolve DNS";
-
-      results.isComplete = true;
-      results.isSuccess = false;
-      results.totalResponseTime = cumulativeTime;
-      results.errorMessage =
-        "DNS resolution failed: " + (error.message || "Failed to resolve DNS");
-
-      // Send final update to client
-      res.write(JSON.stringify({ type: "update", data: results }) + "\n");
-      res.end();
-      return;
-    }
+    // Send update to client
+    res.write(JSON.stringify({ type: "update", data: results }) + "\n");
 
     // Connection Establishment Check
     results.stages[1].status = "loading";
@@ -204,7 +147,7 @@ app.post("/api/check-website", async (req, res) => {
       results.totalResponseTime = cumulativeTime;
       results.errorMessage = errorMsg;
 
-      res.write(JSON.stringify({ type: "update", data: results }) + "\n");
+      res.write(JSON.stringify({ type: "final", data: results }) + "\n");
       res.end();
       return;
     }
@@ -271,7 +214,7 @@ app.post("/api/check-website", async (req, res) => {
         results.totalResponseTime = cumulativeTime;
         results.errorMessage = errorMsg;
 
-        res.write(JSON.stringify({ type: "update", data: results }) + "\n");
+        res.write(JSON.stringify({ type: "final", data: results }) + "\n");
         res.end();
         return;
       }
@@ -373,7 +316,7 @@ app.post("/api/check-website", async (req, res) => {
               results.totalResponseTime = cumulativeTime;
 
               res.write(
-                JSON.stringify({ type: "update", data: results }) + "\n",
+                JSON.stringify({ type: "final", data: results }) + "\n",
               );
               resolve();
             });

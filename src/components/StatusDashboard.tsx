@@ -19,13 +19,16 @@ interface StatusDashboardProps {
   url?: string;
   isChecking?: boolean;
   onCheckComplete?: (success: boolean, totalTime: number) => void;
+  onStopCheck?: () => void;
 }
 
 const StatusDashboard = ({
   url = "",
   isChecking = false,
   onCheckComplete = () => {},
+  onStopCheck = () => {},
 }: StatusDashboardProps) => {
+  const [isStopped, setIsStopped] = useState(false);
   const [stages, setStages] = useState<CheckStage[]>([
     { id: "dns", name: "DNS Resolution", status: "idle" },
     { id: "connection", name: "Connection Establishment", status: "idle" },
@@ -39,8 +42,6 @@ const StatusDashboard = ({
   const [totalResponseTime, setTotalResponseTime] = useState(0);
   const [errorMessage, setErrorMessage] = useState("");
   const [progress, setProgress] = useState(0);
-  const [checkLocation, setCheckLocation] = useState("");
-  const [checkIP, setCheckIP] = useState("");
 
   // Reset the dashboard when a new check starts
   useEffect(() => {
@@ -58,11 +59,30 @@ const StatusDashboard = ({
       setTotalResponseTime(0);
       setErrorMessage("");
       setProgress(10); // Start progress at 10%
+      setIsStopped(false);
 
       // Perform server-side website checks
       performServerChecks(url);
     }
   }, [isChecking, url]);
+
+  // Handle stopping the checks
+  const handleStopChecks = () => {
+    setIsStopped(true);
+    setIsComplete(true);
+    setErrorMessage("Check stopped by user");
+    setProgress(100);
+    onStopCheck();
+
+    // Save stopped check to history
+    saveCheckToHistory({
+      url: url,
+      timestamp: new Date().toLocaleString(),
+      success: false,
+      responseTime: totalResponseTime,
+      errorMessage: "Check stopped by user",
+    });
+  };
 
   // This function performs server-side website status checks
   const performServerChecks = async (targetUrl: string) => {
@@ -90,6 +110,11 @@ const StatusDashboard = ({
       let buffer = "";
 
       while (true) {
+        // Check if the user has stopped the checks
+        if (isStopped) {
+          reader.cancel();
+          break;
+        }
         const { done, value } = await reader.read();
         if (done) break;
 
@@ -110,10 +135,6 @@ const StatusDashboard = ({
               setIsSuccess(data.isSuccess);
               setTotalResponseTime(data.totalResponseTime);
               setErrorMessage(data.errorMessage);
-
-              // Set location information if available
-              if (data.checkLocation) setCheckLocation(data.checkLocation);
-              if (data.checkIP) setCheckIP(data.checkIP);
 
               // Update progress based on stages
               updateProgressFromStages(data.stages);
@@ -206,7 +227,7 @@ const StatusDashboard = ({
   return (
     <Card className="w-full bg-background shadow-md border">
       <CardContent className="p-6">
-        {isChecking && (
+        {isChecking && !isStopped && (
           <div className="mb-6">
             <div className="flex justify-between items-center mb-2">
               <span className="text-sm font-medium">
@@ -214,7 +235,16 @@ const StatusDashboard = ({
               </span>
               <span className="text-sm text-muted-foreground">{progress}%</span>
             </div>
-            <Progress value={progress} className="h-2" />
+            <div className="flex items-center gap-2">
+              <Progress value={progress} className="h-2 flex-1" />
+              <button
+                onClick={handleStopChecks}
+                className="px-3 py-1 bg-destructive text-destructive-foreground text-xs font-medium rounded hover:bg-destructive/90 transition-colors"
+                aria-label="Stop check"
+              >
+                Stop
+              </button>
+            </div>
           </div>
         )}
 
@@ -241,12 +271,6 @@ const StatusDashboard = ({
                 <ExternalLink className="h-4 w-4" />
               </a>
             </div>
-            {checkLocation && (
-              <div className="mt-2 text-sm text-muted-foreground flex items-center">
-                <span className="font-medium mr-1">Check location:</span>{" "}
-                {checkLocation}
-              </div>
-            )}
           </div>
         )}
 
