@@ -1,5 +1,5 @@
 // Simple script to start both client and server
-import { spawn } from "child_process";
+const { spawn } = require("child_process");
 
 // Start the server
 const server = spawn("node", ["server/index.js"], { stdio: "inherit" });

@@ -4,6 +4,7 @@ import dns from "dns";
 import https from "https";
 import http from "http";
 import { URL } from "url";
+import axios from "axios";
 
 const app = express();
 const PORT = process.env.PORT || 3001;
@@ -30,15 +31,39 @@ const extractDomain = (url) => {
   }
 };
 
+// Function to get location from IP
+async function getLocationFromIP() {
+  try {
+    // Using ipinfo.io service to get location data
+    const response = await axios.get("https://ipinfo.io/json");
+    return {
+      ip: response.data.ip,
+      city: response.data.city,
+      region: response.data.region,
+      country: response.data.country,
+      location: `${response.data.city}, ${response.data.region}, ${response.data.country}`,
+    };
+  } catch (error) {
+    console.error("Error getting location:", error);
+    return {
+      ip: "Unknown",
+      city: "Unknown",
+      region: "Unknown",
+      country: "Unknown",
+      location: "Unknown location",
+    };
+  }
+}
+
 // Endpoint to check website status
 app.post("/api/check-website", async (req, res) => {
-  // Set appropriate headers for Vercel environment
-  res.setHeader("Cache-Control", "no-cache, no-transform");
-  res.setHeader("X-Accel-Buffering", "no");
   const { url } = req.body;
   if (!url) {
     return res.status(400).json({ error: "URL is required" });
   }
+
+  // Get location information
+  const locationInfo = await getLocationFromIP();
 
   const processedUrl = ensureProtocol(url);
   const domain = extractDomain(processedUrl);
@@ -54,16 +79,12 @@ app.post("/api/check-website", async (req, res) => {
     isSuccess: false,
     totalResponseTime: 0,
     errorMessage: "",
+    checkLocation: locationInfo.location,
+    checkIP: locationInfo.ip,
   };
 
   const startTime = Date.now();
   let cumulativeTime = 0;
-
-  // Set up response headers for streaming
-  res.setHeader("Content-Type", "application/json");
-  res.setHeader("Transfer-Encoding", "chunked");
-  res.setHeader("Connection", "keep-alive");
-  res.setHeader("Cache-Control", "no-cache");
 
   try {
     // DNS Resolution Check
@@ -74,39 +95,13 @@ app.post("/api/check-website", async (req, res) => {
     const dnsStartTime = Date.now();
     try {
       await new Promise((resolve, reject) => {
-        // Set a shorter timeout for DNS resolution to prevent hanging on Vercel
-        const dnsTimeout = setTimeout(() => {
-          reject(new Error("DNS resolution timed out after 3 seconds"));
-        }, 3000);
-
-        // Try both dns.lookup and dns.promises.resolve4 for better compatibility
-        try {
-          // First attempt with dns.lookup
-          dns.lookup(domain, { all: true }, (err, addresses) => {
-            if (!err && addresses && addresses.length > 0) {
-              clearTimeout(dnsTimeout);
-              resolve(addresses);
-            } else {
-              // If dns.lookup fails, we'll try dns.resolve4 in the catch block
-              // Don't reject here to allow the second method to try
-              if (err)
-                console.log("DNS lookup failed, trying resolve4:", err.message);
-            }
-          });
-
-          // Second attempt with dns.resolve (works better in some environments)
-          dns.resolve(domain, (err, addresses) => {
-            clearTimeout(dnsTimeout);
-            if (err || !addresses || addresses.length === 0) {
-              reject(new Error(err ? err.message : "Domain not resolvable"));
-            } else {
-              resolve(addresses);
-            }
-          });
-        } catch (error) {
-          clearTimeout(dnsTimeout);
-          reject(new Error(`DNS resolution failed: ${error.message}`));
-        }
+        dns.lookup(domain, (err) => {
+          if (err) {
+            reject(new Error("Domain not resolvable"));
+          } else {
+            resolve();
+          }
+        });
       });
 
       const dnsTime = Date.now() - dnsStartTime;
@@ -140,7 +135,7 @@ app.post("/api/check-website", async (req, res) => {
         "DNS resolution failed: " + (error.message || "Failed to resolve DNS");
 
       // Send final update to client
-      res.write(JSON.stringify({ type: "final", data: results }) + "\n");
+      res.write(JSON.stringify({ type: "update", data: results }) + "\n");
       res.end();
       return;
     }
@@ -209,7 +204,7 @@ app.post("/api/check-website", async (req, res) => {
       results.totalResponseTime = cumulativeTime;
       results.errorMessage = errorMsg;
 
-      res.write(JSON.stringify({ type: "final", data: results }) + "\n");
+      res.write(JSON.stringify({ type: "update", data: results }) + "\n");
       res.end();
       return;
     }
@@ -276,7 +271,7 @@ app.post("/api/check-website", async (req, res) => {
         results.totalResponseTime = cumulativeTime;
         results.errorMessage = errorMsg;
 
-        res.write(JSON.stringify({ type: "final", data: results }) + "\n");
+        res.write(JSON.stringify({ type: "update", data: results }) + "\n");
         res.end();
         return;
       }
@@ -378,7 +373,7 @@ app.post("/api/check-website", async (req, res) => {
               results.totalResponseTime = cumulativeTime;
 
               res.write(
-                JSON.stringify({ type: "final", data: results }) + "\n",
+                JSON.stringify({ type: "update", data: results }) + "\n",
               );
               resolve();
             });
@@ -455,30 +450,6 @@ app.post("/api/check-website", async (req, res) => {
 app.get("/api/health", (req, res) => {
   res.json({ status: "ok" });
 });
-
-// Handle CORS for Vercel deployment
-app.options("*", cors());
-
-// Serve static files if in production
-if (process.env.NODE_ENV === "production") {
-  import("path").then((path) => {
-    const __dirname = path.dirname(new URL(import.meta.url).pathname);
-    app.use(express.static(path.join(__dirname, "../dist")));
-
-    // Handle all other routes by serving the index.html
-    app.get("*", (req, res) => {
-      res.sendFile(path.join(__dirname, "../dist/index.html"));
-    });
-  });
-} else {
-  // In development, just respond with a simple message for the root route
-  app.get("/", (req, res) => {
-    res.json({
-      message:
-        "Server is running. Use the client application to interact with the API.",
-    });
-  });
-}
 
 app.listen(PORT, () => {
   console.log(`Server running on port ${PORT}`);

@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useRef } from "react";
+import React, { useState, useEffect } from "react";
 import CheckStageList from "./CheckStageList";
 import SummaryPanel from "./SummaryPanel";
 import { Card, CardContent } from "./ui/card";
@@ -19,16 +19,13 @@ interface StatusDashboardProps {
   url?: string;
   isChecking?: boolean;
   onCheckComplete?: (success: boolean, totalTime: number) => void;
-  onStopCheck?: () => void;
 }
 
 const StatusDashboard = ({
   url = "",
   isChecking = false,
   onCheckComplete = () => {},
-  onStopCheck = () => {},
 }: StatusDashboardProps) => {
-  const [isStopped, setIsStopped] = useState(false);
   const [stages, setStages] = useState<CheckStage[]>([
     { id: "dns", name: "DNS Resolution", status: "idle" },
     { id: "connection", name: "Connection Establishment", status: "idle" },
@@ -42,12 +39,8 @@ const StatusDashboard = ({
   const [totalResponseTime, setTotalResponseTime] = useState(0);
   const [errorMessage, setErrorMessage] = useState("");
   const [progress, setProgress] = useState(0);
-
-  // Add a ref to store the reader for cancellation
-  const readerRef = useRef<ReadableStreamDefaultReader<Uint8Array> | null>(
-    null,
-  );
-  const abortControllerRef = useRef<AbortController | null>(null);
+  const [checkLocation, setCheckLocation] = useState("");
+  const [checkIP, setCheckIP] = useState("");
 
   // Reset the dashboard when a new check starts
   useEffect(() => {
@@ -65,64 +58,11 @@ const StatusDashboard = ({
       setTotalResponseTime(0);
       setErrorMessage("");
       setProgress(10); // Start progress at 10%
-      setIsStopped(false);
-
-      // Create a new AbortController for this request
-      abortControllerRef.current = new AbortController();
 
       // Perform server-side website checks
       performServerChecks(url);
     }
-
-    // Cleanup function to cancel any ongoing requests when component unmounts or when a new check starts
-    return () => {
-      if (readerRef.current) {
-        readerRef.current.cancel("Request cancelled").catch(console.error);
-        readerRef.current = null;
-      }
-      if (abortControllerRef.current) {
-        abortControllerRef.current.abort();
-        abortControllerRef.current = null;
-      }
-    };
   }, [isChecking, url]);
-
-  // Handle stopping the checks
-  const handleStopChecks = () => {
-    console.log("Stopping checks...");
-
-    // Cancel the reader if it exists
-    if (readerRef.current) {
-      console.log("Cancelling reader...");
-      readerRef.current.cancel("Check stopped by user").catch((err) => {
-        console.error("Error cancelling reader:", err);
-      });
-      readerRef.current = null;
-    }
-
-    // Abort the fetch request if it's still in progress
-    if (abortControllerRef.current) {
-      console.log("Aborting fetch request...");
-      abortControllerRef.current.abort();
-      abortControllerRef.current = null;
-    }
-
-    // Update UI immediately
-    setIsStopped(true);
-    setIsComplete(true);
-    setErrorMessage("Check stopped by user");
-    setProgress(100);
-    onStopCheck();
-
-    // Save stopped check to history
-    saveCheckToHistory({
-      url: url,
-      timestamp: new Date().toLocaleString(),
-      success: false,
-      responseTime: totalResponseTime,
-      errorMessage: "Check stopped by user",
-    });
-  };
 
   // This function performs server-side website status checks
   const performServerChecks = async (targetUrl: string) => {
@@ -130,14 +70,13 @@ const StatusDashboard = ({
     const processedUrl = targetUrl;
 
     try {
-      // Call the server API to check the website status with the AbortController signal
+      // Call the server API to check the website status
       const response = await fetch("/api/check-website", {
         method: "POST",
         headers: {
           "Content-Type": "application/json",
         },
         body: JSON.stringify({ url: processedUrl }),
-        signal: abortControllerRef.current?.signal,
       });
 
       // Set up a reader to process the stream
@@ -146,77 +85,59 @@ const StatusDashboard = ({
         throw new Error("Failed to get response reader");
       }
 
-      // Store the reader in the ref for potential cancellation
-      readerRef.current = reader;
-
       // Process the stream
       const decoder = new TextDecoder();
       let buffer = "";
 
       while (true) {
-        // Check if the user has stopped the checks
-        if (isStopped) {
-          reader.cancel();
-          break;
-        }
+        const { done, value } = await reader.read();
+        if (done) break;
 
-        try {
-          const { done, value } = await reader.read();
-          if (done) break;
+        buffer += decoder.decode(value, { stream: true });
 
-          buffer += decoder.decode(value, { stream: true });
+        // Process complete messages in the buffer
+        const lines = buffer.split("\n");
+        buffer = lines.pop() || ""; // Keep the last incomplete line in the buffer
 
-          // Process complete messages in the buffer
-          const lines = buffer.split("\n");
-          buffer = lines.pop() || ""; // Keep the last incomplete line in the buffer
+        for (const line of lines) {
+          if (line.trim()) {
+            try {
+              const { type, data } = JSON.parse(line);
 
-          for (const line of lines) {
-            if (line.trim()) {
-              try {
-                const { type, data } = JSON.parse(line);
+              // Update UI based on the received data
+              setStages(data.stages);
+              setIsComplete(data.isComplete);
+              setIsSuccess(data.isSuccess);
+              setTotalResponseTime(data.totalResponseTime);
+              setErrorMessage(data.errorMessage);
 
-                // Update UI based on the received data
-                setStages(data.stages);
-                setIsComplete(data.isComplete);
-                setIsSuccess(data.isSuccess);
-                setTotalResponseTime(data.totalResponseTime);
-                setErrorMessage(data.errorMessage);
+              // Set location information if available
+              if (data.checkLocation) setCheckLocation(data.checkLocation);
+              if (data.checkIP) setCheckIP(data.checkIP);
 
-                // Update progress based on stages
-                updateProgressFromStages(data.stages);
+              // Update progress based on stages
+              updateProgressFromStages(data.stages);
 
-                // If this is the final update, call onCheckComplete and save to history
-                if (type === "final" || data.isComplete) {
-                  onCheckComplete(data.isSuccess, data.totalResponseTime);
+              // If this is the final update, call onCheckComplete and save to history
+              if (type === "final" || data.isComplete) {
+                onCheckComplete(data.isSuccess, data.totalResponseTime);
 
-                  // Save check result to history
-                  saveCheckToHistory({
-                    url: processedUrl,
-                    timestamp: new Date().toLocaleString(),
-                    success: data.isSuccess,
-                    responseTime: data.totalResponseTime,
-                    errorMessage: data.errorMessage || undefined,
-                  });
-                }
-              } catch (e) {
-                console.error("Error parsing server response:", e);
+                // Save check result to history
+                saveCheckToHistory({
+                  url: processedUrl,
+                  timestamp: new Date().toLocaleString(),
+                  success: data.isSuccess,
+                  responseTime: data.totalResponseTime,
+                  errorMessage: data.errorMessage || undefined,
+                });
               }
+            } catch (e) {
+              console.error("Error parsing server response:", e);
             }
           }
-        } catch (error: any) {
-          // If the error is due to the user stopping the check, just break the loop
-          if (isStopped || error.name === "AbortError") {
-            break;
-          }
-          throw error; // Re-throw other errors to be caught by the outer try-catch
         }
       }
     } catch (error: any) {
-      // Don't update UI if the error was caused by the user stopping the check
-      if (isStopped || error.name === "AbortError") {
-        return;
-      }
-
       // Handle any unexpected errors
       console.error("Error performing server checks:", error);
       setErrorMessage(error.message || "Failed to connect to server");
@@ -233,9 +154,6 @@ const StatusDashboard = ({
         responseTime: 0,
         errorMessage: error.message || "Failed to connect to server",
       });
-    } finally {
-      // Clear the reader ref
-      readerRef.current = null;
     }
   };
 
@@ -288,7 +206,7 @@ const StatusDashboard = ({
   return (
     <Card className="w-full bg-background shadow-md border">
       <CardContent className="p-6">
-        {isChecking && !isStopped && (
+        {isChecking && (
           <div className="mb-6">
             <div className="flex justify-between items-center mb-2">
               <span className="text-sm font-medium">
@@ -296,16 +214,7 @@ const StatusDashboard = ({
               </span>
               <span className="text-sm text-muted-foreground">{progress}%</span>
             </div>
-            <div className="flex items-center gap-2">
-              <Progress value={progress} className="h-2 flex-1" />
-              <button
-                onClick={handleStopChecks}
-                className="px-3 py-1 bg-destructive text-destructive-foreground text-xs font-medium rounded hover:bg-destructive/90 transition-colors"
-                aria-label="Stop check"
-              >
-                Stop
-              </button>
-            </div>
+            <Progress value={progress} className="h-2" />
           </div>
         )}
 
@@ -332,6 +241,12 @@ const StatusDashboard = ({
                 <ExternalLink className="h-4 w-4" />
               </a>
             </div>
+            {checkLocation && (
+              <div className="mt-2 text-sm text-muted-foreground flex items-center">
+                <span className="font-medium mr-1">Check location:</span>{" "}
+                {checkLocation}
+              </div>
+            )}
           </div>
         )}
 
