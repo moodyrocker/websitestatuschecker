@@ -56,6 +56,12 @@ app.post("/api/check-website", async (req, res) => {
   const startTime = Date.now();
   let cumulativeTime = 0;
 
+  // Set up response headers for streaming
+  res.setHeader("Content-Type", "application/json");
+  res.setHeader("Transfer-Encoding", "chunked");
+  res.setHeader("Connection", "keep-alive");
+  res.setHeader("Cache-Control", "no-cache");
+
   try {
     // DNS Resolution Check
     results.stages[0].status = "loading";
@@ -65,11 +71,17 @@ app.post("/api/check-website", async (req, res) => {
     const dnsStartTime = Date.now();
     try {
       await new Promise((resolve, reject) => {
+        // Set a timeout for DNS resolution to prevent hanging
+        const dnsTimeout = setTimeout(() => {
+          reject(new Error("DNS resolution timed out after 5 seconds"));
+        }, 5000);
+
         dns.lookup(domain, { all: true }, (err, addresses) => {
+          clearTimeout(dnsTimeout);
           if (err || !addresses || addresses.length === 0) {
-            reject(new Error("Domain not resolvable"));
+            reject(new Error(err ? err.message : "Domain not resolvable"));
           } else {
-            resolve();
+            resolve(addresses);
           }
         });
       });
@@ -105,7 +117,7 @@ app.post("/api/check-website", async (req, res) => {
         "DNS resolution failed: " + (error.message || "Failed to resolve DNS");
 
       // Send final update to client
-      res.write(JSON.stringify({ type: "update", data: results }) + "\n");
+      res.write(JSON.stringify({ type: "final", data: results }) + "\n");
       res.end();
       return;
     }
@@ -174,7 +186,7 @@ app.post("/api/check-website", async (req, res) => {
       results.totalResponseTime = cumulativeTime;
       results.errorMessage = errorMsg;
 
-      res.write(JSON.stringify({ type: "update", data: results }) + "\n");
+      res.write(JSON.stringify({ type: "final", data: results }) + "\n");
       res.end();
       return;
     }
@@ -241,7 +253,7 @@ app.post("/api/check-website", async (req, res) => {
         results.totalResponseTime = cumulativeTime;
         results.errorMessage = errorMsg;
 
-        res.write(JSON.stringify({ type: "update", data: results }) + "\n");
+        res.write(JSON.stringify({ type: "final", data: results }) + "\n");
         res.end();
         return;
       }
@@ -343,7 +355,7 @@ app.post("/api/check-website", async (req, res) => {
               results.totalResponseTime = cumulativeTime;
 
               res.write(
-                JSON.stringify({ type: "update", data: results }) + "\n",
+                JSON.stringify({ type: "final", data: results }) + "\n",
               );
               resolve();
             });

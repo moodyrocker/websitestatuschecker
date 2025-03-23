@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from "react";
+import React, { useState, useEffect, useRef } from "react";
 import CheckStageList from "./CheckStageList";
 import SummaryPanel from "./SummaryPanel";
 import { Card, CardContent } from "./ui/card";
@@ -43,6 +43,12 @@ const StatusDashboard = ({
   const [errorMessage, setErrorMessage] = useState("");
   const [progress, setProgress] = useState(0);
 
+  // Add a ref to store the reader for cancellation
+  const readerRef = useRef<ReadableStreamDefaultReader<Uint8Array> | null>(
+    null,
+  );
+  const abortControllerRef = useRef<AbortController | null>(null);
+
   // Reset the dashboard when a new check starts
   useEffect(() => {
     if (isChecking && url) {
@@ -61,13 +67,40 @@ const StatusDashboard = ({
       setProgress(10); // Start progress at 10%
       setIsStopped(false);
 
+      // Create a new AbortController for this request
+      abortControllerRef.current = new AbortController();
+
       // Perform server-side website checks
       performServerChecks(url);
     }
+
+    // Cleanup function to cancel any ongoing requests when component unmounts or when a new check starts
+    return () => {
+      if (readerRef.current) {
+        readerRef.current.cancel("Request cancelled").catch(console.error);
+        readerRef.current = null;
+      }
+      if (abortControllerRef.current) {
+        abortControllerRef.current.abort();
+        abortControllerRef.current = null;
+      }
+    };
   }, [isChecking, url]);
 
   // Handle stopping the checks
   const handleStopChecks = () => {
+    // Cancel the reader if it exists
+    if (readerRef.current) {
+      readerRef.current.cancel("Check stopped by user").catch(console.error);
+      readerRef.current = null;
+    }
+
+    // Abort the fetch request if it's still in progress
+    if (abortControllerRef.current) {
+      abortControllerRef.current.abort();
+      abortControllerRef.current = null;
+    }
+
     setIsStopped(true);
     setIsComplete(true);
     setErrorMessage("Check stopped by user");
@@ -90,13 +123,14 @@ const StatusDashboard = ({
     const processedUrl = targetUrl;
 
     try {
-      // Call the server API to check the website status
+      // Call the server API to check the website status with the AbortController signal
       const response = await fetch("/api/check-website", {
         method: "POST",
         headers: {
           "Content-Type": "application/json",
         },
         body: JSON.stringify({ url: processedUrl }),
+        signal: abortControllerRef.current?.signal,
       });
 
       // Set up a reader to process the stream
@@ -104,6 +138,9 @@ const StatusDashboard = ({
       if (!reader) {
         throw new Error("Failed to get response reader");
       }
+
+      // Store the reader in the ref for potential cancellation
+      readerRef.current = reader;
 
       // Process the stream
       const decoder = new TextDecoder();
@@ -115,50 +152,64 @@ const StatusDashboard = ({
           reader.cancel();
           break;
         }
-        const { done, value } = await reader.read();
-        if (done) break;
 
-        buffer += decoder.decode(value, { stream: true });
+        try {
+          const { done, value } = await reader.read();
+          if (done) break;
 
-        // Process complete messages in the buffer
-        const lines = buffer.split("\n");
-        buffer = lines.pop() || ""; // Keep the last incomplete line in the buffer
+          buffer += decoder.decode(value, { stream: true });
 
-        for (const line of lines) {
-          if (line.trim()) {
-            try {
-              const { type, data } = JSON.parse(line);
+          // Process complete messages in the buffer
+          const lines = buffer.split("\n");
+          buffer = lines.pop() || ""; // Keep the last incomplete line in the buffer
 
-              // Update UI based on the received data
-              setStages(data.stages);
-              setIsComplete(data.isComplete);
-              setIsSuccess(data.isSuccess);
-              setTotalResponseTime(data.totalResponseTime);
-              setErrorMessage(data.errorMessage);
+          for (const line of lines) {
+            if (line.trim()) {
+              try {
+                const { type, data } = JSON.parse(line);
 
-              // Update progress based on stages
-              updateProgressFromStages(data.stages);
+                // Update UI based on the received data
+                setStages(data.stages);
+                setIsComplete(data.isComplete);
+                setIsSuccess(data.isSuccess);
+                setTotalResponseTime(data.totalResponseTime);
+                setErrorMessage(data.errorMessage);
 
-              // If this is the final update, call onCheckComplete and save to history
-              if (type === "final" || data.isComplete) {
-                onCheckComplete(data.isSuccess, data.totalResponseTime);
+                // Update progress based on stages
+                updateProgressFromStages(data.stages);
 
-                // Save check result to history
-                saveCheckToHistory({
-                  url: processedUrl,
-                  timestamp: new Date().toLocaleString(),
-                  success: data.isSuccess,
-                  responseTime: data.totalResponseTime,
-                  errorMessage: data.errorMessage || undefined,
-                });
+                // If this is the final update, call onCheckComplete and save to history
+                if (type === "final" || data.isComplete) {
+                  onCheckComplete(data.isSuccess, data.totalResponseTime);
+
+                  // Save check result to history
+                  saveCheckToHistory({
+                    url: processedUrl,
+                    timestamp: new Date().toLocaleString(),
+                    success: data.isSuccess,
+                    responseTime: data.totalResponseTime,
+                    errorMessage: data.errorMessage || undefined,
+                  });
+                }
+              } catch (e) {
+                console.error("Error parsing server response:", e);
               }
-            } catch (e) {
-              console.error("Error parsing server response:", e);
             }
           }
+        } catch (error: any) {
+          // If the error is due to the user stopping the check, just break the loop
+          if (isStopped || error.name === "AbortError") {
+            break;
+          }
+          throw error; // Re-throw other errors to be caught by the outer try-catch
         }
       }
     } catch (error: any) {
+      // Don't update UI if the error was caused by the user stopping the check
+      if (isStopped || error.name === "AbortError") {
+        return;
+      }
+
       // Handle any unexpected errors
       console.error("Error performing server checks:", error);
       setErrorMessage(error.message || "Failed to connect to server");
@@ -175,6 +226,9 @@ const StatusDashboard = ({
         responseTime: 0,
         errorMessage: error.message || "Failed to connect to server",
       });
+    } finally {
+      // Clear the reader ref
+      readerRef.current = null;
     }
   };
 
