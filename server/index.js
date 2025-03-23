@@ -32,6 +32,9 @@ const extractDomain = (url) => {
 
 // Endpoint to check website status
 app.post("/api/check-website", async (req, res) => {
+  // Set appropriate headers for Vercel environment
+  res.setHeader("Cache-Control", "no-cache, no-transform");
+  res.setHeader("X-Accel-Buffering", "no");
   const { url } = req.body;
   if (!url) {
     return res.status(400).json({ error: "URL is required" });
@@ -56,6 +59,12 @@ app.post("/api/check-website", async (req, res) => {
   const startTime = Date.now();
   let cumulativeTime = 0;
 
+  // Set up response headers for streaming
+  res.setHeader("Content-Type", "application/json");
+  res.setHeader("Transfer-Encoding", "chunked");
+  res.setHeader("Connection", "keep-alive");
+  res.setHeader("Cache-Control", "no-cache");
+
   try {
     // DNS Resolution Check
     results.stages[0].status = "loading";
@@ -65,13 +74,39 @@ app.post("/api/check-website", async (req, res) => {
     const dnsStartTime = Date.now();
     try {
       await new Promise((resolve, reject) => {
-        dns.lookup(domain, (err) => {
-          if (err) {
-            reject(new Error("Domain not resolvable"));
-          } else {
-            resolve();
-          }
-        });
+        // Set a shorter timeout for DNS resolution to prevent hanging on Vercel
+        const dnsTimeout = setTimeout(() => {
+          reject(new Error("DNS resolution timed out after 3 seconds"));
+        }, 3000);
+
+        // Try both dns.lookup and dns.promises.resolve4 for better compatibility
+        try {
+          // First attempt with dns.lookup
+          dns.lookup(domain, { all: true }, (err, addresses) => {
+            if (!err && addresses && addresses.length > 0) {
+              clearTimeout(dnsTimeout);
+              resolve(addresses);
+            } else {
+              // If dns.lookup fails, we'll try dns.resolve4 in the catch block
+              // Don't reject here to allow the second method to try
+              if (err)
+                console.log("DNS lookup failed, trying resolve4:", err.message);
+            }
+          });
+
+          // Second attempt with dns.resolve (works better in some environments)
+          dns.resolve(domain, (err, addresses) => {
+            clearTimeout(dnsTimeout);
+            if (err || !addresses || addresses.length === 0) {
+              reject(new Error(err ? err.message : "Domain not resolvable"));
+            } else {
+              resolve(addresses);
+            }
+          });
+        } catch (error) {
+          clearTimeout(dnsTimeout);
+          reject(new Error(`DNS resolution failed: ${error.message}`));
+        }
       });
 
       const dnsTime = Date.now() - dnsStartTime;
@@ -105,7 +140,7 @@ app.post("/api/check-website", async (req, res) => {
         "DNS resolution failed: " + (error.message || "Failed to resolve DNS");
 
       // Send final update to client
-      res.write(JSON.stringify({ type: "update", data: results }) + "\n");
+      res.write(JSON.stringify({ type: "final", data: results }) + "\n");
       res.end();
       return;
     }
@@ -174,7 +209,7 @@ app.post("/api/check-website", async (req, res) => {
       results.totalResponseTime = cumulativeTime;
       results.errorMessage = errorMsg;
 
-      res.write(JSON.stringify({ type: "update", data: results }) + "\n");
+      res.write(JSON.stringify({ type: "final", data: results }) + "\n");
       res.end();
       return;
     }
@@ -241,7 +276,7 @@ app.post("/api/check-website", async (req, res) => {
         results.totalResponseTime = cumulativeTime;
         results.errorMessage = errorMsg;
 
-        res.write(JSON.stringify({ type: "update", data: results }) + "\n");
+        res.write(JSON.stringify({ type: "final", data: results }) + "\n");
         res.end();
         return;
       }
@@ -343,7 +378,7 @@ app.post("/api/check-website", async (req, res) => {
               results.totalResponseTime = cumulativeTime;
 
               res.write(
-                JSON.stringify({ type: "update", data: results }) + "\n",
+                JSON.stringify({ type: "final", data: results }) + "\n",
               );
               resolve();
             });
@@ -420,6 +455,9 @@ app.post("/api/check-website", async (req, res) => {
 app.get("/api/health", (req, res) => {
   res.json({ status: "ok" });
 });
+
+// Handle CORS for Vercel deployment
+app.options("*", cors());
 
 // Serve static files if in production
 if (process.env.NODE_ENV === "production") {
